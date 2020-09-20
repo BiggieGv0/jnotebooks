@@ -1,0 +1,176 @@
+#!/usr/bin/env python
+# coding: utf8
+
+#from datetime import datetime, date, time
+import sys
+import datetime
+import pytz
+import collections
+from pyaux import window
+import marketdata as md
+from marketdata import ccomb
+MSK = pytz.timezone('Europe/Moscow')
+
+
+## Parameters
+barformat = "bar_timeframe_10"
+#contract = "RTS-12.11"
+asset = 'RTS'
+#pois_s = ["20110401 1200", "20110504 1015"]
+poi_s = "1405"
+ws = 10  # window (left and right) size
+
+
+import csv
+def dictlist2csv(data, outfile='tmpf.csv', csv_params=None, force_header=None):
+    """ Save list of dicts (with same set of keys) as csv file.
+    NOTE: the whole list should be in memory (if `force_header` is not specified).  """
+    csv_params = csv_params or {}
+    header = force_header or sorted(list(set.union(*[set(v.keys()) for v in data])))
+    with open(outfile, 'w') as f_out:
+        csv_out = csv.writer(f_out, **csv_params)
+        csv_out.writerow(header)
+        #csv_out.writerow(["<%s>" % v for v in header])
+        for v in data:
+            out = [v[n] for n in header]
+            csv_out.writerow(out)
+
+
+def window2basedata(backlog, wsl):
+    ## ... the point.
+    #i_left = max(0, i - ws)  # make sure it's not negative
+    window_left = backlog[:wsl]  #bars[i_left:i]
+    window_right = backlog[wsl:]  #bars[i:i+ws]  # NOTE: includes the current one.
+    bar = backlog[wsl]
+    ts0 = bar.start
+    res_v = dict(
+      bar_start=ts0,
+      val=bar.o,
+      left=window_left[0].o,
+#      left_high=max(b.h for b in window_left),
+#      left_low=min(b.l for b in window_left),
+#      right_low=min(b.l for b in window_right),
+#      right_high=max(b.h for b in window_right),
+      right=window_right[-1].c,
+      #right_diff=window_right[-1].c - bar.o,
+      #left_diff=bar.o - window_left[0].c,
+      )
+    ## ...derived values (for convenience)
+    res_v.update(dict(
+      right_diff=-(res_v['val'] - res_v['right']),
+      left_diff=res_v['val'] - res_v['left'],
+#      lh_diff=res_v['val'] - res_v['left_high'],
+#      ll_diff=res_v['val'] - res_v['left_low'],
+#      rh_diff=-(res_v['val'] - res_v['right_high']),
+#      rl_diff=-(res_v['val'] - res_v['right_low']),
+      ))
+    return res_v
+
+
+
+DTFMTS = ('%Y-%m-%d %H:%M:%S', '%m/%d/%Y %H:%M',
+          '%d.%m.%Y %H:%M:%S', '%Y-%m-%d', '%d.%m.%Y')
+def _pdt(dt):
+    if isinstance(dt, datetime.datetime):
+        return dt
+    #ee = None
+    for dtfmt in DTFMTS:
+        try:
+            return datetime.datetime.strptime(dt, dtfmt)
+        except ValueError as e:
+            #if ee is None:
+            #    ee = e
+            continue
+    #if ee is not None:
+    #    raise ee
+    raise ValueError("Cannot parse datetime", dt)
+def main(poi_times, bars=None, barformat=barformat,
+      asset=asset, #contract=contract,
+      wsl=ws, wsr=None, file_out=None, ipy=False, fd=False):
+    """ ...
+    `barformat`: type of the bar
+    `asset`: ...
+    `poi_times`: list of `datetime`s (or `YYYY-MM-DD HH:MM:SS` strings)
+      with the points of interest.
+    `wsl`: window size to the left
+    `wsr`: window size to the right (same as wsl if None)
+    `fd`: return list of all bars in window instead of base values
+    """
+    wsr = wsr or wsl
+    ws = wsl + wsr
+    #pois = [datetime.strptime(v, "%Y%m%d %H%M%S") for v in pois_s]
+    poi_l = poi_times
+    poi_l = [_pdt(v) for v in poi_l]
+    poi_l = sorted(poi_l)
+    poi_i = iter(poi_l)
+    poi = next(poi_i)  # grab the first one
+    #= time(int(poi_s[:2]), int(poi_s[2:]))
+    #ts_process = lambda d: MSK.localize(d).astimezone(pytz.utc).time()
+    #ts_process = lambda d: d.replace(tzinfo=pytz.UTC).astimezone(MSK)
+    ts_process = lambda d: d
+    res = []
+    #bars = md.get_bars(contract, barformat)
+    #import ipdb; ipdb.set_trace()
+    if bars is None:
+        bars = ccomb.get_cc_bars(asset, barformat)
+    else:
+        bars = iter(bars)
+    #next(bars)
+    #next(bars)
+    #backlog = collections.deque(maxlen=ws*2)
+    #bars = list(bars)  ## XXX: memory!
+    #prev_bar = bars.pop(0)
+    #prev_bar = next(bars)
+    # enumerate? seems unnecessary
+    ## Note: no left/right fill; points at the ends will be simply
+    ##   ignored. Use some smart bar plug as fill if needed.
+    day_open = None
+    ## XXXXX: tmp
+    #bars = list(bars)
+    for backlog in window(bars, size=ws):
+        #backlog.append(bar_c)  # ... could simply use `window(...)`.
+        prev_bar = backlog[wsl-1]
+        bar = backlog[wsl]
+        if bar.start.date() != prev_bar.start.date():
+            day_open = bar.o
+        ts0 = ts_process(bar.start)
+
+        if (ts_process(prev_bar.start) < poi
+          and ts0 >= poi
+          #and (day_open is not None and prev_bar.c >= day_open + 1000)
+          ):
+            if fd:
+                res_v = list(backlog)
+            else:
+                res_v = window2basedata(backlog, wsl)
+            res.append(res_v)  # NOTE: assuming they are not too numerous.
+            # (also assuming that for the csv saving)
+        _brk2 = False
+        while poi < ts0:
+            ## if/when current POI
+            try:
+                poi = next(poi_i)
+            except StopIteration:
+                #break  # will `break` out of `while`?..
+                _brk2 = True
+                break
+        if _brk2:
+            break
+        #prev_bar = bar
+
+    sorted_header = ['left', 'left_diff', 'val', 'right_diff', 'right']
+    dump2 = lambda fn: dictlist2csv(res, outfile=fn, force_header=sorted_header)
+    if file_out is None:
+        if ipy:
+            import IPython
+            IPython.embed(banner1=(
+              'Variables: `res`;\n'
+              '`dictlist2csv(res, outfile="tmpf.csv")` to save it to tmpf.csv;\n'
+              ' `dump2("tmpf.csv")` to save with manually-sorted headers.'))
+    else:
+        dump2(file_out)
+    return res
+
+
+if __name__ == '__main__':
+    main(sys.argv[0])

@@ -1,0 +1,142 @@
+import pandas
+import datetime
+import ipdb
+import pylab
+import numpy
+import ipdb
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib import cm
+
+
+def zz(series, step=500):
+    z = []
+    pc = 0
+    distance = 0
+    extremum = 0
+    te = None
+    duration = datetime.timedelta(0)
+    pt = 0
+    distance_from_ext = 0
+    duration_from_ext = datetime.timedelta(0)
+    for time, close in series.iterkv():
+        if len(z) == 0:
+            pc = close
+            pt = time
+            extremum = close
+            te = time
+            z.append([time, close, 0, duration, 0])
+            continue
+        c = z[-1][1]
+        distance += abs(close-pc)
+        distance_from_ext += abs(close-pc)
+        pc = close
+        if time.date() == pt.date():
+            duration += (time - pt)
+            duration_from_ext += (time - pt)
+        pt = time
+        d = z[-1][-1]              
+        if d > 0:
+            if close < extremum:
+                extremum = close
+                te = time
+                duration_from_ext = datetime.timedelta(0)
+                distance_from_ext = 0
+            if close - extremum >= step:
+                z.append([te, extremum, distance - distance_from_ext, duration - duration_from_ext, -1])
+                distance = distance_from_ext
+                duration = duration_from_ext
+                distance_from_ext = 0
+                duration_from_ext = datetime.timedelta(0)
+                extremum = close
+                te = time
+        elif d < 0:
+            if close > extremum:
+                extremum = close
+                te = time
+                duration_from_ext = datetime.timedelta(0)
+                distance_from_ext = 0
+            if extremum - close >= step:
+                z.append([te, extremum, distance - distance_from_ext, duration - duration_from_ext, 1])
+                distance = distance_from_ext
+                duration = duration_from_ext
+                duration_from_ext = datetime.timedelta(0)
+                distance_from_ext = 0
+                extremum = close
+                te = time
+        elif d == 0:
+            if close - c > step: # first leg will be upswing
+                z[-1][-1] = -1
+            if c - close > step: # ...
+                z[-1][-1] = 1
+    df = {'time': [], 'price': [], 'distance': [], 'duration': []}
+    for t, c, d, du, di in z:
+        df['time'].append(t)
+        df['price'].append(c)
+        df['distance'].append(d)
+        df['duration'].append(du)
+    df = pandas.DataFrame(df)
+    #import ipdb
+    #ipdb.set_trace()
+    df.index = df.time
+    df['leg'] = df.price.diff()
+    df['zub'] = df.leg.abs() / df.distance
+    df = df.dropna()
+    del df['time']
+    return df
+
+
+#cl = pandas.load('closes')
+#df = zz(cl)
+
+#x1 = 0.5
+#x2 = 0.6
+#l1 = 1000
+
+
+
+
+
+#dd = df[(df.zub > x1) * (df.zub < x2) * (df.leg.abs() < l1)]
+
+
+def mx(legs, mins, df):
+    ''' legs -- leg resolution
+    mins -- duration (minutes) resolution '''
+    # x: leg
+    # y: dur in minutes
+    a = numpy.zeros((legs, mins))
+    df = df.filter(['leg', 'duration'])
+    df['leg'] = df.leg.abs()
+    df['duration'] = df.duration.apply(lambda x: x.total_seconds() / 60)
+    leg_step = (df.leg.max() - df.leg.min()) / legs
+    dur_step = (df.duration.max() - df.duration.min()) / legs
+    print 'leg_step: %s, dur_step: %s' % (leg_step, dur_step)
+    for t, d in df.iterrows():
+        l = d['leg']
+        d = d['duration']
+        #print int((d - df.duration.min()) / dur_step)-1
+        a[int((l - df.leg.min()) / leg_step), int((d - df.duration.min()) / dur_step)] += 1
+    print a[0, -1]
+    freq = []
+    dur_upper = []
+    dur_lower = []
+    leg_upper = []
+    leg_lower = []
+    lm = df.leg.min()
+    dm = df.duration.min()
+    for l in xrange(a.shape[0]):
+        for d in xrange(a.shape[1]):
+            freq.append(a[l, d])
+            dur_lower.append(dm + d * dur_step)
+            dur_upper.append(dm + (d+1) * dur_step)
+            leg_lower.append(lm + l * leg_step)
+            leg_upper.append(lm + (l+1) * leg_step)
+    return pandas.DataFrame({'freq': freq, 'dur_lower': dur_lower, 'dur_upper': dur_upper, 'leg_lower': leg_lower, 'leg_upper': leg_upper})
+    
+
+#pylab.hist(dd.duration.values)
+#pylab.show()
+
+#import IPython
+#IPython.embed(banner1='')

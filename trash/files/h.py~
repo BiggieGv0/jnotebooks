@@ -1,0 +1,89 @@
+#!/usr/bin/env python
+# coding: utf8
+
+import os
+import bs4
+import pandas
+import cPickle as pickle
+
+
+def innerhtml(el):
+    return el.decode_contents(formatter="html")
+
+
+def innertext(el):
+    return ''.join(unicode(s) for s in el.findAll(text=True))
+
+
+def makelist(table, elp=innertext):
+    result = []
+    allrows = table.findAll('tr')
+    for row in allrows:
+        result.append([])
+        allcols = row.findAll('td')
+        for col in allcols:
+            thetext = elp(col)
+            result[-1].append(thetext)
+    return result
+
+
+def process_file(filename='ec_earnings.php@q=ASTC', elp=innertext):
+    s = bs4.BeautifulSoup(open(filename).read())
+    ts = s.find_all('table', {'class': 'earning_history'})
+    res1 = [makelist(t, elp=elp) for t in ts]
+    ti = s.find('table', {'class': 'info-table'})
+    res2 = makelist(ti, elp=elp)
+    res = res1, res2
+    return res
+
+
+def to_df(data):
+    res = data
+    res1 = res[0]
+    d1 = res1[0][1:]
+    if len(res1) > 1:
+        for t in res1[1:]:
+            d1 += t
+    import pandas
+    columns = 'Date xx Qtr EPS Cons. Surprise Revs Cons. Gd. %Since Details'.split()
+    d1 = d1 or None
+    data = pandas.DataFrame(d1, columns=columns)
+    timetype = res[1][-1][-1]
+    data['timetype'] = timetype
+    import dateutil
+    data['Date_p'] = data['Date']['Date'].map(lambda s: dateutil.parser.parse(s).date())
+    _parse1 = (lambda s: float(s.replace('$', '')) if s != 'N/A' else None)
+    data['EPS_p'] = data['EPS']['EPS'].map(_parse1)
+    data['CONS_p'] = data['CONS']['CONS'].map(_parse1)
+    return data
+
+
+def to_text(filename_or_data):
+    if isinstance(filename_or_data, (bytes, unicode)):
+        res = process_file(filename)
+    else:
+        res = filename_or_data
+    data = to_df(res)
+    return data.to_string()
+
+
+def to_text_file(filename):
+    data = process_file(filename)
+    text = to_text(data)
+    ticker = os.path.basename(filename).split('=', 1)[1]
+    with open('data_%s.txt' % (ticker,), 'w') as f:
+        f.write(text)
+        f.write('\n')
+    with open('data_%s.pickle' % (ticker,), 'wb') as f:
+        pickle.dump(data, f)
+    return data
+
+
+def main():
+    filenames = [v for v in os.listdir('.') if v.startswith('ec_earnings.php@q=')]
+    for fn in filenames:
+        to_text_file(fn)
+
+
+if __name__ == '__main__':
+    main()

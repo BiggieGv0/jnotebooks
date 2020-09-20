@@ -1,0 +1,28 @@
+import marketdata.ext
+import marketdata
+import math
+import h 
+import pandas as pa
+import datetime as dt
+from IPython.display import HTML
+import pybacktest as pbt
+from strat.pbpsbth import persistent_locals2
+from pyquant.transforms import ADX_iter
+from IPython.display import display, HTML
+H = lambda df, tail=500: display(HTML(df.tail(tail).to_html(float_format=(lambda v: '%.6f' % (v,)))))
+
+
+def intersect_index(*dataframes):
+    common_index = set.intersection(*(set(df.index) for df in dataframes))
+    common_index = sorted(common_index)
+    ## XX: alternatively: iterate over the index of the first dataframe filtering out the non-common
+    #common_index = [v for v in dataframes[0].index if v in common_index]
+    return tuple(df.reindex(common_index) for df in dataframes)
+
+
+def _venn(a, b):
+    aa = set(a)
+    bb = set(b)
+    return (aa.intersection(bb), aa - bb, bb - aa)
+
+
